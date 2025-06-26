@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  # Nombre del servicio, puedes ponerle lo que quieras
+  api_recomendacion:
+    # Le dice a Compose que construya la imagen usando el Dockerfile en el directorio actual (.)
+    build: .
+    # Nombre que le daremos al contenedor cuando se ejecute
+    container_name: api_autos_recomendacion
+    # Mapeo de puertos: "PUERTO_EN_TU_MAQUINA:PUERTO_EN_EL_CONTENEDOR"
+    # Esto te permite acceder a la API en http://localhost:8000 en tu navegador
+    ports:
+      - "8000:8000"
+    # Política de reinicio: si el contenedor se detiene por alguna razón, se reiniciará automáticamente.
+    restart: unless-stopped
