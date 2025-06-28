@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 import pandas as pd
 import joblib
 
 app = FastAPI(
     title="API de Similitud de Autos",
     description="Provee recomendaciones de autos similares basadas en sus características.",
-    version="1.0.0",
+    version="2.0.0", # ¡Subimos de versión por el gran cambio!
 )
 
 # Cargar los archivos pre-calculados al iniciar la aplicación
@@ -13,61 +13,108 @@ try:
     cosine_sim = joblib.load('cosine_sim_matrix.pkl')
     df_autos = pd.read_pickle('car_dataframe.pkl')
     print("Modelo de similitud y dataframe cargados correctamente.")
+    # Asegurar que las columnas de texto sean consistentes para la búsqueda
+    df_autos['Marca_lower'] = df_autos['Marca'].str.lower()
+    df_autos['Modelo_lower'] = df_autos['Modelo'].str.lower()
+    print("Columnas de búsqueda en minúsculas creadas para búsquedas insensibles.")
+
 except FileNotFoundError:
-    # Si los archivos no existen, la aplicación no puede funcionar.
-    raise RuntimeError("Archivos de modelo no encontrados. Ejecuta 'crear_modelo_similitud.py' primero.")
+    raise RuntimeError("Archivos de modelo no encontrados. Ejecuta el build de Docker o el script 'crear_modelo_similitud.py' primero.")
 
 @app.get("/")
 def read_root():
-    return {"message": "API de Similitud de Autos. Endpoints disponibles: /cars y /similar-cars/{car_id}"}
+    return {"message": "API de Similitud de Autos. Endpoints disponibles: /cars, /similar-cars/{car_id} y /similar-cars-by-model"}
 
 @app.get('/cars',
           tags=["Autos"],
           summary="Obtener la lista de todos los autos con su ID")
 def get_all_cars():
-    """
-    Devuelve una lista de todos los autos con su `car_id`, `Marca`, `Modelo` y `Año`.
-    Útil para que el frontend muestre una lista y pueda usar el `car_id` para pedir recomendaciones.
-    """
     cols_to_return = ['car_id', 'Marca', 'Modelo', 'Año']
     return df_autos[cols_to_return].to_dict(orient='records')
 
+# --- INICIO DEL NUEVO ENDPOINT ---
+
+@app.get('/similar-cars-by-model',
+         tags=["Recomendaciones"],
+         summary="Obtener autos similares usando Marca y Modelo")
+def get_similar_cars_by_model(
+    marca: str = Query(..., description="Marca del auto. Ejemplo: Toyota"),
+    modelo: str = Query(..., description="Modelo del auto. Ejemplo: Yaris"),
+    count: int = Query(5, description="Número de recomendaciones a devolver.")
+):
+    """
+    Recibe una marca y un modelo, encuentra el auto más reciente que coincida
+    y devuelve una lista de los autos más similares a él.
+    """
+    # 1. Normalizar las entradas para hacer la búsqueda insensible a mayúsculas/minúsculas
+    search_marca = marca.lower()
+    search_modelo = modelo.lower()
+
+    # 2. Buscar todos los autos que coincidan con la marca y modelo
+    matching_cars = df_autos[
+        (df_autos['Marca_lower'] == search_marca) &
+        (df_autos['Modelo_lower'] == search_modelo)
+    ]
+
+    # 3. Si no se encuentra ningún auto, devolver un error 404
+    if matching_cars.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No se encontraron autos para la marca '{marca}' y modelo '{modelo}'."
+        )
+
+    # 4. Seleccionar el auto más reciente como nuestro auto de referencia
+    source_car = matching_cars.sort_values(by='Año', ascending=False).iloc[0]
+    source_car_id = int(source_car['car_id'])
+
+    # 5. Reutilizar la lógica de similitud existente con el ID del auto de referencia
+    sim_scores = list(enumerate(cosine_sim[source_car_id]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    sim_scores = sim_scores[1:count + 1]
+    similar_car_indices = [i[0] for i in sim_scores]
+
+    if not similar_car_indices:
+        return {
+            "source_car": source_car.to_dict(),
+            "recommendations": [],
+            "message": "Se encontró un auto de referencia, pero no hay otras recomendaciones similares."
+        }
+
+    results = df_autos.iloc[similar_car_indices]
+
+    return {
+        "source_car": source_car.to_dict(),
+        "recommendations": results.to_dict(orient='records')
+    }
+
+# --- FIN DEL NUEVO ENDPOINT ---
 
 @app.get('/similar-cars/{car_id}',
-          tags=["Recomendaciones"],
-          summary="Obtener autos similares a un auto específico por su ID")
-def get_similar_cars(car_id: int, count: int = 5):
+          tags=["Recomendaciones (por ID)"],
+          summary="Obtener autos similares a un auto específico por su ID (Legacy)")
+def get_similar_cars_by_id(car_id: int, count: int = 5):
     """
     Recibe el `car_id` de un auto y devuelve una lista de los `count` autos más similares.
     """
     if car_id not in df_autos.index:
         raise HTTPException(status_code=404, detail=f"Auto con ID {car_id} no encontrado.")
 
-    # 1. Obtener los puntajes de similitud del auto elegido contra todos los demás
+    source_car = df_autos.iloc[car_id]
     sim_scores = list(enumerate(cosine_sim[car_id]))
-
-    # 2. Ordenar los autos basado en los puntajes de similitud (de mayor a menor)
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-
-    # 3. Obtener los IDs de los autos más similares, excluyendo el propio auto
     sim_scores = sim_scores[1:count+1]
     similar_car_indices = [i[0] for i in sim_scores]
 
-    # --- INICIO DE LA MEJORA ---
-    # 4. Verificar si se encontraron autos similares después del filtrado.
     if not similar_car_indices:
-        # Si la lista está vacía, devolvemos una respuesta controlada.
         return {
-            "source_car": df_autos.iloc[car_id].to_dict(),
-            "recommendations": [], # Devolvemos una lista vacía
+            "source_car": source_car.to_dict(),
+            "recommendations": [],
             "message": "No se encontraron autos suficientemente similares."
         }
-    # --- FIN DE LA MEJORA ---
-
-    # 5. Si encontramos resultados, devolver la información de los autos recomendados
+    
     results = df_autos.iloc[similar_car_indices]
     
     return {
-        "source_car": df_autos.iloc[car_id].to_dict(),
+        "source_car": source_car.to_dict(),
         "recommendations": results.to_dict(orient='records')
     }
