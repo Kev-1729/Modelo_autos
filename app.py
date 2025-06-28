@@ -12,8 +12,9 @@ app = FastAPI(
 try:
     cosine_sim = joblib.load('cosine_sim_matrix.pkl')
     df_autos = pd.read_pickle('car_dataframe.pkl')
-    print("Modelo de similitud y dataframe cargados.")
+    print("Modelo de similitud y dataframe cargados correctamente.")
 except FileNotFoundError:
+    # Si los archivos no existen, la aplicación no puede funcionar.
     raise RuntimeError("Archivos de modelo no encontrados. Ejecuta 'crear_modelo_similitud.py' primero.")
 
 @app.get("/")
@@ -21,8 +22,8 @@ def read_root():
     return {"message": "API de Similitud de Autos. Endpoints disponibles: /cars y /similar-cars/{car_id}"}
 
 @app.get('/cars',
-         tags=["Autos"],
-         summary="Obtener la lista de todos los autos con su ID")
+          tags=["Autos"],
+          summary="Obtener la lista de todos los autos con su ID")
 def get_all_cars():
     """
     Devuelve una lista de todos los autos con su `car_id`, `Marca`, `Modelo` y `Año`.
@@ -33,8 +34,8 @@ def get_all_cars():
 
 
 @app.get('/similar-cars/{car_id}',
-         tags=["Recomendaciones"],
-         summary="Obtener autos similares a un auto específico por su ID")
+          tags=["Recomendaciones"],
+          summary="Obtener autos similares a un auto específico por su ID")
 def get_similar_cars(car_id: int, count: int = 5):
     """
     Recibe el `car_id` de un auto y devuelve una lista de los `count` autos más similares.
@@ -48,11 +49,22 @@ def get_similar_cars(car_id: int, count: int = 5):
     # 2. Ordenar los autos basado en los puntajes de similitud (de mayor a menor)
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
 
-    # 3. Obtener los IDs de los autos más similares, excluyendo el propio auto (que siempre será el primero)
+    # 3. Obtener los IDs de los autos más similares, excluyendo el propio auto
     sim_scores = sim_scores[1:count+1]
     similar_car_indices = [i[0] for i in sim_scores]
 
-    # 4. Devolver la información de los autos recomendados
+    # --- INICIO DE LA MEJORA ---
+    # 4. Verificar si se encontraron autos similares después del filtrado.
+    if not similar_car_indices:
+        # Si la lista está vacía, devolvemos una respuesta controlada.
+        return {
+            "source_car": df_autos.iloc[car_id].to_dict(),
+            "recommendations": [], # Devolvemos una lista vacía
+            "message": "No se encontraron autos suficientemente similares."
+        }
+    # --- FIN DE LA MEJORA ---
+
+    # 5. Si encontramos resultados, devolver la información de los autos recomendados
     results = df_autos.iloc[similar_car_indices]
     
     return {
