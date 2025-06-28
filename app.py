@@ -25,13 +25,6 @@ except FileNotFoundError:
 def read_root():
     return {"message": "API de Similitud de Autos. Endpoints disponibles: /cars, /similar-cars/{car_id} y /similar-cars-by-model"}
 
-@app.get('/cars',
-          tags=["Autos"],
-          summary="Obtener la lista de todos los autos con su ID")
-def get_all_cars():
-    cols_to_return = ['car_id', 'Marca', 'Modelo', 'Año']
-    return df_autos[cols_to_return].to_dict(orient='records')
-
 # --- INICIO DEL NUEVO ENDPOINT ---
 
 @app.get('/similar-cars-by-model',
@@ -87,34 +80,3 @@ def get_similar_cars_by_model(
         "recommendations": results.to_dict(orient='records')
     }
 
-# --- FIN DEL NUEVO ENDPOINT ---
-
-@app.get('/similar-cars/{car_id}',
-          tags=["Recomendaciones (por ID)"],
-          summary="Obtener autos similares a un auto específico por su ID (Legacy)")
-def get_similar_cars_by_id(car_id: int, count: int = 5):
-    """
-    Recibe el `car_id` de un auto y devuelve una lista de los `count` autos más similares.
-    """
-    if car_id not in df_autos.index:
-        raise HTTPException(status_code=404, detail=f"Auto con ID {car_id} no encontrado.")
-
-    source_car = df_autos.iloc[car_id]
-    sim_scores = list(enumerate(cosine_sim[car_id]))
-    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-    sim_scores = sim_scores[1:count+1]
-    similar_car_indices = [i[0] for i in sim_scores]
-
-    if not similar_car_indices:
-        return {
-            "source_car": source_car.to_dict(),
-            "recommendations": [],
-            "message": "No se encontraron autos suficientemente similares."
-        }
-    
-    results = df_autos.iloc[similar_car_indices]
-    
-    return {
-        "source_car": source_car.to_dict(),
-        "recommendations": results.to_dict(orient='records')
-    }
